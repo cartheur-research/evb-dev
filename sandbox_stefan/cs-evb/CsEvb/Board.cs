@@ -38,6 +38,17 @@ public class Board : IXmlSerializable
     return chips_[ind].GetRomType(node % 10000);
   }
 
+  public void InitializeHostChipAsync(Serial ser, F18Assembler ass, string src)
+  {
+    byte[] buffer = new byte[3];
+    F18A bootNode = GetHostChip().GetNodeFromNo(708);
+    ass.Assemble(GetHostChip(), bootNode, src, false);
+    int[] bootFrame = bootNode.GetBootFrame();
+    ser.Rts(10);
+    ser.WriteAll(buffer, bootFrame);
+  }
+
+
   public XmlSchema? GetSchema()
   {
     return null;

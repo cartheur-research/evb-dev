@@ -37,16 +37,19 @@ public class GA144 : Chip, IXmlSerializable
 
   public int GetNodeIndexFromNo(int node_no)
   {
-    int r, c;
-    GetNodePlaceFromNo(node_no, out r, out c);
+    GetNodePlaceFromNo(node_no, out int r, out int c);
     return GetNodeIndex(r, c);
   }
 
   public int GetNodeNoFromIndex(int node_index)
   {
-    int r, c;
-    GetNodePlaceFromIndex(node_index, out r, out c);
+    GetNodePlaceFromIndex(node_index, out int r, out int c);
     return GetNodeNo(r, c);
+  }
+
+  public F18A GetNodeFromNo(int node_no)
+  {
+    return nodes_[GetNodeIndexFromNo(node_no)];
   }
 
   public F18A GetNode(int node_index)
@@ -204,4 +207,13 @@ public class GA144 : Chip, IXmlSerializable
     }
     writer.WriteEndElement();
   }
+
+  public void FillHostTest()
+  {
+    F18A node = GetNodeFromNo(708);
+    node.Source = @"
+    ";
+  }
+
+
 }

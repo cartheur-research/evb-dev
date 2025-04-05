@@ -107,7 +107,9 @@ namespace CsEvb
       DO_THEN,          // #THEN
       TO_INTERPRET,     // [
       TO_COMPILE,       // ]
-      INCLUDE,
+      INCLUDE,  // include  ( node ) import labels defined by node (and compile if not already compiled)
+      ASSERT,  // assert  ( n ) assert that slot is 0 and the current address is n
+      TICK, // ' <label> ( - n ) lookup label and push its value onto the stack
       limit
     }
 
@@ -376,6 +378,16 @@ namespace CsEvb
       node_ = null;
     }
 
+    public string Disassemble(GA144 chip, F18A node, bool is_rom)
+    {
+      chip_ = chip;
+      node_ = node;
+      string res = Decompile(is_rom);
+      chip_ = null;
+      node_ = null;
+      return res;
+    }
+
     public int ToDigit(char ch, int radix)
     {
       if (radix > 10)
@@ -399,6 +411,7 @@ namespace CsEvb
       }
       return -1;
     }
+
 
     public bool LookupNumber(string txt, out int val)
     {
@@ -664,6 +677,10 @@ namespace CsEvb
           Word(')');
           break;
 
+        case Command.LCOMMENT:
+          Word((char)0x0a);
+          break;
+
         case Command.IF:
           Push(PrepareBranch(F18A.Opcode.IF));
           break;
@@ -792,6 +809,10 @@ namespace CsEvb
             throw new InvalidDataException("cannot find identifier '" + bld_.ToString() + "' in node "+ par2.ToString());
           }
           CompileBranch(F18A.Opcode.CALL, par1);
+          break;
+
+        case Command.ASSIGN_P:
+          node_.SetInitialP(Pop());
           break;
 
         case Command.ABEGIN:
@@ -1186,6 +1207,30 @@ namespace CsEvb
       else { Push(value); }
     }
 
+    public string Decompile(bool is_rom)
+    {
+      System.Diagnostics.Debug.Assert(node_ is not null);
+      StringBuilder sb = new();
+
+      if (is_rom) { node_.DecompileROM(sb); }
+      else { node_.DecompileRAM(sb); }
+
+      F18A.Memory mem = is_rom ? node_.ROM : node_.RAM;
+      int limit = (int) (is_rom ? F18A.ROM_SIZE : F18A.RAM_SIZE);
+      int i = 0;
+      while (i < limit)
+      {
+        int addr = i;
+        if (is_rom) { addr += 0x80; }
+        if (node_.TryLookupAddress(addr, out var lbl))
+        {
+          sb.Append(": ");
+          sb.Append(lbl);
+          sb.AppendLine();
+        }
+      }
+      return sb.ToString();
+    }
     public void Compile(string src, bool is_rom)
     {
       System.Diagnostics.Debug.Assert(node_ is not null);

@@ -4,8 +4,10 @@ using System.Windows.Forms;
 
 namespace EvbStudio
 {
-    public partial class MainWindow : Form
+  public partial class MainWindow : Form
   {
+    private CsEvb.Serial serial_;
+
     public MainWindow()
     {
       main_menu_ = new MainMenu();
@@ -16,6 +18,9 @@ namespace EvbStudio
       this.Menu = main_menu_;
 
       InitializeComponent();
+
+      serial_ = CsEvb.Serial.Create("COM3");
+
     }
 
     private void ExitMenuItemClick(object sender, EventArgs e)

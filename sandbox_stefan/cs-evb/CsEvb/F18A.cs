@@ -10,23 +10,25 @@ namespace CsEvb
 {
   public class F18A : IXmlSerializable
   {
-    public const uint InvalidValue = 0x80000000;
+    public const uint INVALID_VALUE = 0x80000000;
 
     //public const uint ParameterStackSize = 8;
     //public const uint ReturnStackSize = 8;
-    public const uint StackSize = 8;
+    public const uint STACK_SIZE = 8;
 
-    public const uint ROMBits = 6;
-    public const uint ROMSize = 1u << (int)ROMBits;
-    public const uint ROMMask = ROMSize - 1;
+    public const int ROM_START = 0x80;
+    public const uint ROM_BITS = 6;
+    public const uint ROM_SIZE = 1u << (int)ROM_BITS;
+    public const uint ROM_MASK = ROM_SIZE - 1;
 
-    public const uint RAMBits = 6;
-    public const uint RAMSize = 1u << (int)RAMBits;
-    public const uint RAMMask = RAMSize - 1;
+    public const int RAM_START = 0x00;
+    public const uint RAM_BITS = 6;
+    public const uint RAM_SIZE = 1u << (int)RAM_BITS;
+    public const uint RAM_MASK = RAM_SIZE - 1;
 
-    public const uint MEMBits = 6;
-    public const uint MEMSize = 1u << (int)MEMBits;
-    public const uint MEMMask = MEMSize - 1;
+    public const uint MEM_BITS = 6;
+    public const uint MEM_SIZE = 1u << (int)MEM_BITS;
+    public const uint MEM_MASK = MEM_SIZE - 1;
 
     //============================================================================
 
@@ -109,7 +111,33 @@ namespace CsEvb
 
     //============================================================================
 
+    static public int GetSlot(int code, int slot)
+    {
+      code ^= 0x15555;
+      switch (slot)
+      {
+        case 0: return (code >> 13) & 0x1f;
+        case 1: return (code >> 8) & 0x1f;
+        case 2: return (code >> 3) & 0x1f;
+        case 3: return (code << 2) & 0x1f;
+        default:
+          throw new InvalidDataException($"invalid slot '{slot}'");
+      }
+    }
 
+    static public int GetAddress(int code, int slot, int baseAddr)
+    {
+      int addr;
+      switch (slot)
+      {
+        case 1: addr = code & 0x3ff; break;
+        case 2: addr = (code & 0xff) | (baseAddr & 0x300); break;
+        case 3: addr = (code & 0x7) | (baseAddr & 0x3f8); break;
+        default:
+          throw new InvalidDataException($"invalid slot '{slot}'");
+      }
+      return addr;
+    }
 
     //============================================================================
 
@@ -334,7 +362,7 @@ namespace CsEvb
 
       public Memory()
       {
-        data_ = new int[MEMSize];
+        data_ = new int[MEM_SIZE];
       }
 
       public void Write(int pos, int value)
@@ -349,7 +377,7 @@ namespace CsEvb
 
       public void Clear()
       {
-        for (int i = 0; i < MEMSize; ++i)
+        for (int i = 0; i < MEM_SIZE; ++i)
         {
           data_[i] = 0;
         }
@@ -357,7 +385,7 @@ namespace CsEvb
 
       public void Init(int val)
       {
-        for (int i = 0; i < MEMSize; ++i)
+        for (int i = 0; i < MEM_SIZE; ++i)
         {
           data_[i] = val;
         }
@@ -607,11 +635,28 @@ namespace CsEvb
     private Dictionary<string, int> rom_label_map_ = [];
     private Dictionary<int, string> addr_to_label_map_ = [];
     private Dictionary<int, string> addr_to_rom_label_map_ = [];
+    private uint initial_p_ = INVALID_VALUE; // position in source
     private int index_ = -1;
     private bool rom_compiled_ = false;
 
     public F18A()
     {
+    }
+
+
+
+    public int GetInitialP()
+    {
+      if (initial_p_ == F18A.INVALID_VALUE)
+      {
+        throw new InvalidOperationException($"/P not specified for node '{GetNodeNo()}'");
+      }
+      return (int)initial_p_;
+    }
+
+    public void SetInitialP(int value)
+    {
+      initial_p_ = (uint)value;
     }
 
     public int GetColumn()
@@ -733,11 +778,13 @@ namespace CsEvb
       {
         rom_label_map_[label] = addr;
         addr_to_rom_label_map_[addr] = label;
+        addr_to_rom_label_map_[addr ^ 0x40] = label;
       }
       else
       {
         label_map_[label] = addr;
         addr_to_label_map_[addr] = label;
+        addr_to_label_map_[addr ^ 0x40] = label;
       }
     }
 
@@ -802,11 +849,11 @@ namespace CsEvb
 
     public void Write(int pos, int value)
     {
-      if (pos <= 0x7f)
+      if ((pos >= RAM_START) && (pos < (RAM_START + RAM_SIZE + RAM_SIZE)))
       {
         ram_.Write(pos, value);
       }
-      else if (pos <= 0xff)
+      else if ((pos >= ROM_START) && (pos < (ROM_START + ROM_SIZE + ROM_SIZE)))
       {
         rom_.Write(pos, value);
       }
@@ -818,11 +865,11 @@ namespace CsEvb
 
     public int Read(int pos)
     {
-      if (pos <= 0x7f)
+      if ((pos >= RAM_START) && (pos < (RAM_START + RAM_SIZE + RAM_SIZE)))
       {
         return ram_.Read(pos);
       }
-      if (pos <= 0xff)
+      else if ((pos >= ROM_START) && (pos < (ROM_START + ROM_SIZE + ROM_SIZE)))
       {
         return rom_.Read(pos);
       }
@@ -961,9 +1008,188 @@ namespace CsEvb
       rom_compiled_ = true;
     }
 
+    public void CompileRAM(F18Assembler ass, string txt)
+    {
+      System.Diagnostics.Debug.Assert(chip_ is not null);
+      ClearRAM();
+      ass.Assemble(chip_, this, txt, false);
+    }
+
+    public int DecompileWord(StringBuilder sb, int addr, int pos)
+    {
+      sb.Append(addr.ToString("X3"));
+      int jmpAddr, lit;
+      string? dest;
+      int code = Read(addr);
+      sb.Append(' ');
+      sb.Append(code.ToString("X5"));
+      if (TryLookupAddress(addr, out var lbl))
+      {
+        sb.Append(" : ");
+        sb.Append(lbl);
+      }
+      //int instr = code ^ 0x15555;
+      ++pos;
+      int slot = 0;
+      while (slot <= 3)
+      {
+        Opcode opcode = (Opcode)GetSlot(code, slot);
+        ++slot;
+        switch (opcode)
+        {
+          case Opcode.JUMP:
+            jmpAddr = GetAddress(code, slot, addr);
+            if (TryLookupAddress(jmpAddr, out dest))
+            {
+              sb.Append(' ');
+              sb.Append(dest);
+              sb.Append(" ;");
+            }
+            else
+            {
+              sb.Append(" jump ");
+              sb.Append(jmpAddr);
+            }
+            sb.Append(" (x");
+            sb.Append(jmpAddr.ToString("X3"));
+            sb.Append(')');
+            slot = 4;
+            break;
+
+          case Opcode.CALL:
+            jmpAddr = GetAddress(code, slot, addr);
+            if (TryLookupAddress(jmpAddr, out dest))
+            {
+              sb.Append(' ');
+              sb.Append(dest);
+            }
+            else
+            {
+              sb.Append(" call ");
+              sb.Append(jmpAddr);
+            }
+            sb.Append(" (x");
+            sb.Append(jmpAddr.ToString("X3"));
+            sb.Append(')');
+            slot = 4;
+            break;
+
+          case Opcode.NEXT:
+            sb.Append(" next");
+            jmpAddr = GetAddress(code, slot, addr);
+            if (TryLookupAddress(jmpAddr, out dest))
+            {
+              sb.Append(' ');
+              sb.Append(dest);
+            }
+            sb.Append(" (x");
+            sb.Append(jmpAddr.ToString("X3"));
+            sb.Append(')');
+            slot = 4;
+            break;
+
+          case Opcode.FETCHP:
+            lit = Read(++addr);
+            ++pos;
+            sb.Append(' ');
+            sb.Append(lit);
+            sb.Append(" (x");
+            sb.Append(lit.ToString("X5"));
+            sb.Append(')');
+            break;
+
+          case Opcode.STOREP:
+            ++addr;
+            sb.Append(' ');
+            sb.Append(OpcodeToString(opcode));
+            sb.Append(" (x");
+            sb.Append(addr.ToString("X3"));
+            sb.Append(')');
+            ++pos;
+            break;
+
+          default:
+            sb.Append(' ');
+            sb.Append(OpcodeToString(opcode));
+            break;
+        }
+      }
+      sb.AppendLine();
+      return pos;
+    }
+
+    public string DecompileROM()
+    {
+      StringBuilder sb = new();
+      DecompileROM(sb);
+      return sb.ToString();
+    }
+    public void DecompileROM(StringBuilder sb)
+    {
+      int i = 0;
+      int limit = (int)ROM_SIZE;
+      while (i < limit)
+      {
+        i = DecompileWord(sb, ROM_START + i, i);
+      }
+    }
+
+    public string DecompileRAM()
+    {
+      StringBuilder sb = new();
+      DecompileRAM(sb);
+      return sb.ToString();
+    }
+    public void DecompileRAM(StringBuilder sb)
+    {
+      int i = 0;
+      int limit = (int) RAM_SIZE;
+      while (i < limit)
+      {
+        i = DecompileWord(sb, RAM_START + i, i);
+      }
+    }
+
+    // return boot frame
+    public int[] GetBootFrame()
+    {
+      int[] res = new int[RAM_SIZE+3];
+      res[0] = GetInitialP();
+      res[1] = 0;
+      res[2] = (int)RAM_SIZE;
+      for (int i = 0; i < RAM_SIZE; ++i)
+      {
+        res[i + 3] = ram_.Read(i);
+      }
+      return res;
+    }
+
     public XmlSchema? GetSchema()
     {
       return null;
+    }
+
+    public void ReadXmlText(XmlReader reader, ref string val)
+    {
+      //if (reader.IsEmptyElement) { val = ""; return; }
+      //val = reader.Value;
+
+      val = "";
+      if (reader.IsEmptyElement) { return; }
+
+      while (reader.Read())
+      {
+        switch (reader.NodeType)
+        {
+          case XmlNodeType.Text:
+          case XmlNodeType.CDATA:
+            val += reader.Value;
+            break;
+          case XmlNodeType.EndElement:
+            return;
+          default: break;
+        }
+      }
     }
 
     public void ReadXml(XmlReader reader)
@@ -989,6 +1215,8 @@ namespace CsEvb
         switch (reader.NodeType)
         {
           case XmlNodeType.Element:
+            if (reader.Name == "source") { ReadXmlText(reader, ref source_); }
+            else if (reader.Name == "comment") { ReadXmlText(reader, ref comment_); }
             break;
           case XmlNodeType.EndElement:
             return;
@@ -1005,6 +1233,19 @@ namespace CsEvb
         chip_.GetNodePlaceFromIndex(index_, out int r, out int c);
         writer.WriteAttributeString("r", r.ToString());
         writer.WriteAttributeString("c", c.ToString());
+        if (source_.Length > 0)
+        {
+          writer.WriteStartElement("source");
+          writer.WriteCData(source_);
+          writer.WriteEndElement();
+        }
+        if (comment_.Length > 0)
+        {
+          //writer.WriteElementString("comment", comment_);
+          writer.WriteStartElement("comment");
+          writer.WriteCData(comment_);
+          writer.WriteEndElement();
+        }
       }
       writer.WriteEndElement();
     }
